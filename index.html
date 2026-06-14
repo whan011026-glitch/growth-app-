@@ -1093,8 +1093,7 @@ function renderReview(){
       <div class="rtc-title">${isSunday?'周复盘时间到了':'复盘在周日触发'}</div>
       <div class="rtc-sub">${isSunday
         ?'一键生成本周复盘，AI帮你梳理这周的状态、亮点、缺口和下周建议'
-        ?'周日晚上系统会自动提醒你，或者你也可以随时手动触发'
-        :'周日晚上系统会自动提醒你，或者你也可以随时手动触发'}</div>
+        :'周日晚上会提醒你，或者随时手动触发'}</div>
       <button class="btn-primary" id="review-start-btn" onclick="startReview()"
         style="max-width:200px;margin:0 auto">
         ${isSunday?'生成本周复盘 →':'现在提前复盘'}
@@ -1180,6 +1179,15 @@ function doExport(){
 renderToday();
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
-<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("./sw.js").then(()=>{console.log("SW registered")});}// Sunday 9pm reminder
-const checkReminder=()=>{const n=new Date();if(n.getDay()===0&&n.getHours()===21&&Notification.permission==="granted"){new Notification("五域周复盘",{body:"周日到了，花5分钟生成本周复盘吧 📋",icon:"./manifest.json"})}};setInterval(checkReminder,60000*10);</script></body>
+<script>
+if('serviceWorker' in navigator && location.protocol !== 'file:'){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+setInterval(()=>{
+  const n=new Date();
+  if(n.getDay()===0 && n.getHours()===21 && Notification && Notification.permission==='granted'){
+    new Notification('五域周复盘',{body:'周日到了，花5分钟生成本周复盘吧 📋'});
+  }
+}, 600000);
+</script></body>
 </html>
