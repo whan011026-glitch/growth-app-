@@ -12,32 +12,33 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@300;400;500&family=Lora:ital,wght@0,400;1,400&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#EEF6FB;--surface:rgba(255,255,255,.72);--surface-solid:#fff;
+  --bg:transparent;--surface:rgba(255,255,255,.55);--surface-solid:#fff;
   --border:rgba(255,255,255,.6);--border-mid:rgba(180,210,230,.8);
-  --text:#2C3E50;--text2:#5B7A8A;--text3:#9BB5C0;
+  --text:#2A2028;--text2:#5A4A52;--text3:#9A8A92;
   --sans:'Noto Sans SC',sans-serif;--mono:'DM Mono',monospace;--serif:'Lora',serif;
   --r:16px;--shadow:0 4px 24px rgba(100,160,200,.12);
   --glass:rgba(255,255,255,.65);--glass-border:rgba(255,255,255,.8);
-  --c1:#F5A623;--c1b:rgba(245,166,35,.15);--c1t:#7A5010;
-  --c2:#E8456A;--c2b:rgba(232,69,106,.12);--c2t:#7A1830;
-  --c3:#3DBD7D;--c3b:rgba(61,189,125,.12);--c3t:#115C38;
-  --c4:#38B6D4;--c4b:rgba(56,182,212,.12);--c4t:#0E5A6B;
-  --c5:#8B5CF6;--c5b:rgba(139,92,246,.12);--c5t:#3B1A8A;
-  --purple:#8B5CF6;--purple-light:rgba(139,92,246,.12);
+  --c1:#E8456A;--c1b:rgba(255,255,255,.18);--c1t:#4A2030;
+  --c2:#E8456A;--c2b:rgba(255,255,255,.18);--c2t:#4A2030;
+  --c3:#E8456A;--c3b:rgba(255,255,255,.18);--c3t:#4A2030;
+  --c4:#E8456A;--c4b:rgba(255,255,255,.18);--c4t:#4A2030;
+  --c5:#E8456A;--c5b:rgba(255,255,255,.18);--c5t:#4A2030;
+  --accent:#E8456A;
+  --purple:#C0748A;--purple-light:rgba(232,69,106,.1);
   --safe-b:env(safe-area-inset-bottom,0px);
 }
 html,body{height:100%;overflow:hidden;-webkit-tap-highlight-color:transparent}
 body{font-family:var(--sans);color:var(--text);display:flex;flex-direction:column;position:relative}
 
-/* ── Watercolor background ── */
+/* ── Background image ── */
 body::before{
   content:'';position:fixed;inset:0;z-index:-1;
-  background:
-    radial-gradient(ellipse 120% 60% at 50% -10%, #B8DEFF 0%, transparent 60%),
-    radial-gradient(ellipse 80% 50% at 10% 30%, #C8E8FF 0%, transparent 50%),
-    radial-gradient(ellipse 60% 40% at 90% 20%, #D4EEFF 0%, transparent 45%),
-    radial-gradient(ellipse 100% 80% at 50% 100%, #E8F5FF 0%, transparent 60%),
-    linear-gradient(180deg, #C5E3F7 0%, #D8EEF9 30%, #E8F5FB 60%, #EFF8FC 100%);
+  background:url('./bg.png') center center / cover no-repeat;
+}
+/* Subtle overlay to soften */
+body::after{
+  content:'';position:fixed;inset:0;z-index:-1;
+  background:rgba(255,255,255,.08);
 }
 
 /* SVG mountain/cloud layer */
@@ -60,13 +61,13 @@ body::before{
 
 /* ── Glass card base ── */
 .glass{
-  background:var(--glass);
-  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  border:1px solid var(--glass-border);
+  background:rgba(255,255,255,.52);
+  backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.75);
   border-radius:var(--r);
-  box-shadow:var(--shadow);
+  box-shadow:0 4px 24px rgba(180,120,130,.1),inset 0 1px 0 rgba(255,255,255,.8);
 }
-.card{background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--glass-border);border-radius:var(--r);box-shadow:var(--shadow)}
+.card{background:rgba(255,255,255,.52);backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);border:1px solid rgba(255,255,255,.75);border-radius:var(--r);box-shadow:0 4px 24px rgba(180,120,130,.1),inset 0 1px 0 rgba(255,255,255,.8)}
 .slbl{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
 .btn{font-family:var(--sans);font-size:13px;font-weight:500;padding:11px 20px;border-radius:24px;border:none;cursor:pointer;transition:all .18s;width:100%}
 .btn-dark{background:var(--text);color:#fff}
@@ -562,6 +563,7 @@ const ENTJ_LINES={
 const SB_URL='https://ovqrftqlojafvumnppob.supabase.co';
 const SB_KEY='sb_publishable_rtd7u-AWqjLvFrPncGSZTg_7yjDMCG1';
 const USER_KEY='default_user'; // single-user mode
+const KIMI_KEY='sk-7b027281cd1d4bd9a3dff986ca3d3537'; // DeepSeek
 
 let DB={
   logs:{},milestones:{},thesisMilestones:[],
@@ -586,25 +588,81 @@ async function sbGet(){
     if(cached)DB=Object.assign(DB,JSON.parse(cached));
   }
 }
+// ── AI request queue (prevent 429) ──
+const _aiQueue=[];
+let _aiRunning=false;
+async function queueAI(fn){
+  return new Promise((resolve,reject)=>{
+    _aiQueue.push({fn,resolve,reject});
+    if(!_aiRunning) drainAIQueue();
+  });
+}
+async function drainAIQueue(){
+  if(_aiRunning||_aiQueue.length===0)return;
+  _aiRunning=true;
+  const {fn,resolve,reject}=_aiQueue.shift();
+  try{resolve(await fn())}catch(e){reject(e)}
+  _aiRunning=false;
+  if(_aiQueue.length>0){
+    setTimeout(drainAIQueue, 1200); // 1.2s between requests
+  }
+}
+async function kimiCall(messages, maxTokens){
+  return queueAI(async()=>{
+    const res=await fetch('https://api.deepseek.com/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
+      body:JSON.stringify({model:'deepseek-chat',max_tokens:maxTokens,messages})
+    });
+    if(!res.ok){const e=await res.text();throw new Error(`${res.status}: ${e}`)}
+    const data=await res.json();
+    return data.choices[0].message.content;
+  });
+}
+
 let _saveTimer=null;
 function save(){
-  // Always cache locally as backup
   localStorage.setItem('gdb_cache',JSON.stringify(DB));
-  // Debounce Supabase writes (500ms)
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(async()=>{
     try{
-      await fetch(`${SB_URL}/rest/v1/growth_data`,{
-        method:'POST',
+      // Try PATCH first (update existing row)
+      const patch=await fetch(`${SB_URL}/rest/v1/growth_data?user_key=eq.${USER_KEY}`,{
+        method:'PATCH',
         headers:{
           'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,
           'Content-Type':'application/json',
-          'Prefer':'resolution=merge-duplicates'
+          'Prefer':'return=minimal'
         },
-        body:JSON.stringify({user_key:USER_KEY,data:DB,updated_at:new Date().toISOString()})
+        body:JSON.stringify({data:DB,updated_at:new Date().toISOString()})
       });
-    }catch(e){console.warn('Supabase save failed, data cached locally',e)}
-  },500);
+      // If no row existed (204 but 0 rows), insert new
+      if(patch.status===404||patch.status===406){
+        await fetch(`${SB_URL}/rest/v1/growth_data`,{
+          method:'POST',
+          headers:{
+            'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,
+            'Content-Type':'application/json',
+            'Prefer':'return=minimal'
+          },
+          body:JSON.stringify({user_key:USER_KEY,data:DB,updated_at:new Date().toISOString()})
+        });
+      }
+      // Check if PATCH matched 0 rows → need INSERT
+      const count=patch.headers.get('content-range');
+      if(patch.ok&&count==='*/0'){
+        await fetch(`${SB_URL}/rest/v1/growth_data`,{
+          method:'POST',
+          headers:{
+            'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,
+            'Content-Type':'application/json',
+            'Prefer':'return=minimal'
+          },
+          body:JSON.stringify({user_key:USER_KEY,data:DB,updated_at:new Date().toISOString()})
+        });
+      }
+    }catch(e){console.warn('Supabase save failed',e)}
+  },800);
 }
 let ovWk=wkKey(new Date()),curDom=null,prevView='home',curTab=0,entjVisible=false;
 function today(){return new Date().toISOString().slice(0,10)}
@@ -710,7 +768,7 @@ function renderHome(){
     const pct=weekPct(dom.id,wkKey(new Date()));
     const chip=document.createElement('div');chip.className='focus-chip';chip.onclick=()=>openDetail(dom.id);
     chip.style.animationDelay=i*50+'ms';
-    chip.innerHTML=`<div class="focus-dot" style="background:${dom.color}"></div>
+    chip.innerHTML=`<div class="focus-dot" style="background:rgba(255,255,255,.7)"></div>
       <span class="focus-chip-name">${dom.name}</span>
       <span class="focus-chip-pct">${pct}%</span>`;
     fr.appendChild(chip);
@@ -730,14 +788,14 @@ function renderHome(){
 
     const card=document.createElement('div');
     card.className='dcard';
-    card.style.cssText=`background:${dom.light};border-color:${dom.color}30;animation:fadeSlideUp .3s ease ${i*60}ms both`;
+    card.style.cssText=`animation:fadeSlideUp .3s ease ${i*60}ms both`;
     card.innerHTML=`
-      <div class="dcard-head" onclick="toggleDcard('${dom.id}')" style="background:${dom.light}">
-        <div class="dcard-accent" style="background:${dom.color};height:${entries.length>0?36:28}px"></div>
+      <div class="dcard-head" onclick="toggleDcard('${dom.id}')">
+        <div class="dcard-accent" style="background:rgba(255,255,255,.6);height:${entries.length>0?36:28}px"></div>
         <div class="dcard-info">
           <div class="dcard-name">${dom.name}</div>
           <div class="dcard-status" id="dcs-${dom.id}">
-            ${entries.length>0?`<span style="color:${dom.color};font-weight:500">✓ 已记录 ${entries.length} 条</span>`:'<span>今日未打卡</span>'}
+            ${entries.length>0?`<span style="color:rgba(232,69,106,.9);font-weight:500">✓ 已记录 ${entries.length} 条</span>`:'<span>今日未打卡</span>'}
           </div>
         </div>
         <svg class="dcard-ring" viewBox="0 0 36 36">
@@ -771,10 +829,10 @@ function renderLogArea(dom,entries){
       const texts=Object.values(e.text||{}).filter(Boolean);
       html+=`<div class="log-record-card" style="background:rgba(255,255,255,.7);border-color:${dom.color}30">
         <div class="lrc-time">${e.time||''}</div>
-        ${tags.length?`<div class="lrc-tags">${tags.map(t=>`<span class="lrc-tag" style="background:${dom.color}">${t}</span>`).join('')}</div>`:''}
+        ${tags.length?`<div class="lrc-tags">${tags.map(t=>`<span class="lrc-tag" style="background:rgba(100,140,160,.55)">${t}</span>`).join('')}</div>`:''}
         ${texts.map(t=>`<div class="lrc-text">${t}</div>`).join('')}
         ${e.minireview?`<div class="lrc-review">${e.minireview}</div>`:''}
-        <div class="lrc-stars" style="color:${dom.color}">${'★'.repeat(e.energy||0)}<span style="color:var(--border-mid)">${'★'.repeat(5-(e.energy||0))}</span></div>
+        <div class="lrc-stars" style="color:rgba(232,150,100,.9)">${'★'.repeat(e.energy||0)}<span style="color:rgba(255,255,255,.3)">${'★'.repeat(5-(e.energy||0))}</span></div>
         <button class="lrc-del" onclick="delEntry('${dom.id}','${today()}',${i})">×</button>
       </div>`;
     });
@@ -803,7 +861,7 @@ function buildFormHTML(dom){
       <div class="log-step-q">今日能量感</div>
       <div class="stars" id="st-${dom.id}">${[1,2,3,4,5].map(n=>`<span class="star" onclick="setEnergy('${dom.id}',${n})">☆</span>`).join('')}</div>
     </div>
-    <button class="btn btn-dark" onclick="saveEntry('${dom.id}')" style="background:${dom.color}">保存这条记录 ✓</button>
+    <button class="btn btn-dark" onclick="saveEntry('${dom.id}')" style="background:rgba(60,80,100,.75);backdrop-filter:blur(8px)">保存这条记录 ✓</button>
   </div>`;
 }
 
@@ -875,9 +933,9 @@ async function saveEntry(did){
   document.getElementById('log-area-'+did).innerHTML=renderLogArea(dom,entries);
   try{
     const summary=Object.values(tags).filter(Boolean).join('、')+' '+Object.values(text).filter(Boolean).join(' ')+' '+minireview;
-    const res=await fetch('https://api.moonshot.cn/v1/chat/completions',{
-      method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer sk-WxjFTJlXO7W00fTO4xlHCbslEiL7RMU8VJSi4w3gmo47VsPC'},
-      body:JSON.stringify({model:'moonshot-v1-8k',max_tokens:60,
+    const res=await fetch('https://api.deepseek.com/v1/chat/completions',{
+      method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
+      body:JSON.stringify({model:'deepseek-chat',max_tokens:60,
         messages:[{role:'system',content:'你是ENTJ风格导师。根据用户今天某领域的记录，给一句15字以内的点评，直接克制有洞察，不废话。只输出文字。'},{role:'user',content:`领域:${dom.name} 记录:${summary}`}]})
     });
     const data=await res.json();
@@ -935,9 +993,9 @@ async function genDashboardStatus(){
     summary+=`${dom.name}:进度${pct}%,本周打卡${logged}天,连续未打卡${inactive}天${bp?',卡点:'+bp:''} | `;
   });
   try{
-    const res=await fetch('https://api.moonshot.cn/v1/chat/completions',{
-      method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer sk-WxjFTJlXO7W00fTO4xlHCbslEiL7RMU8VJSi4w3gmo47VsPC'},
-      body:JSON.stringify({model:'moonshot-v1-8k',max_tokens:120,
+    const res=await fetch('https://api.deepseek.com/v1/chat/completions',{
+      method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
+      body:JSON.stringify({model:'deepseek-chat',max_tokens:120,
         messages:[{role:'system',content:'你是ENTJ型导师。根据用户五域本周数据，用2-3句话给出判断：哪个领域最活跃、哪个最需要关注、整体趋势如何。直接、理性、克制，不废话，不鼓励，只说事实和判断。'},{role:'user',content:`本周数据：${summary}`}]})
     });
     const data=await res.json();
@@ -985,7 +1043,7 @@ function renderDashboard(){
         </div>
         <div class="arc-bar-track"><div class="arc-bar-fill" style="width:${pct}%;background:${dom.color}"></div></div>
       </div>
-      <div class="arc-pct" style="color:${dom.color}">${pct}%</div>`;
+      <div class="arc-pct" style="color:rgba(60,40,50,.8)">${pct}%</div>`;
     arc.appendChild(strip);
   });
 }
@@ -1012,7 +1070,7 @@ function renderBp(){
   DOMAINS.forEach(dom=>{
     const bp=DB.blockpoints?.[dom.id]||'';
     const div=document.createElement('div');div.className='bp-card';
-    div.innerHTML=`<div class="bp-head"><div class="bp-dot" style="background:${dom.color}"></div><div class="bp-name">${dom.name}</div></div>
+    div.innerHTML=`<div class="bp-head"><div class="bp-dot" style="background:rgba(200,180,190,.8)"></div><div class="bp-name">${dom.name}</div></div>
       <input class="bp-input" id="bp-${dom.id}" value="${bp}" placeholder="当前最大卡点是什么？">
       <button class="bp-save" onclick="saveBp('${dom.id}')">保存</button>`;
     bpl.appendChild(div);
@@ -1057,7 +1115,7 @@ function renderLogHistory(body,dom){
         const texts=Object.values(e.text||{}).filter(Boolean);
         return `<div class="lhist-entry">
           <div class="lhist-time">${e.time||''} ${'★'.repeat(e.energy||0)}</div>
-          ${tags.length?`<div class="lhist-tags">${tags.map(t=>`<span class="lhist-tag" style="background:${dom.color}">${t}</span>`).join('')}</div>`:''}
+          ${tags.length?`<div class="lhist-tags">${tags.map(t=>`<span class="lhist-tag" style="background:rgba(100,140,160,.55)">${t}</span>`).join('')}</div>`:''}
           ${texts.map(t=>`<div class="lhist-text">${t}</div>`).join('')}
           ${e.minireview?`<div class="lhist-review">「${e.minireview}」</div>`:''}
           ${e.aiComment?`<div style="font-size:11px;color:var(--purple);margin-top:4px;font-style:italic">E·导师: ${e.aiComment}</div>`:''}
@@ -1258,8 +1316,8 @@ async function atGen(){
   document.getElementById('at-mid').style.display='block';
   document.getElementById('at-mid-body').innerHTML='<div class="ldots"><span>·</span><span>·</span><span>·</span></div>';
   try{
-    const res=await fetch('https://api.moonshot.cn/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer sk-WxjFTJlXO7W00fTO4xlHCbslEiL7RMU8VJSi4w3gmo47VsPC'},
-      body:JSON.stringify({model:'moonshot-v1-8k',max_tokens:500,
+    const res=await fetch('https://api.deepseek.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
+      body:JSON.stringify({model:'deepseek-chat',max_tokens:500,
         messages:[{role:'system',content:'生成4个拆解问题，返回严格JSON无多余文字：{"questions":[{"key":"background","label":"背景","question":"问题"},{"key":"goal","label":"目的","question":"问题"},{"key":"decision","label":"决策","question":"问题"},{"key":"role","label":"我的角色","question":"问题"}]}问题15字内口语化。'},{role:'user',content:`工作：${task}`}]})});
     const data=await res.json();
     atQs=JSON.parse(data.choices[0].message.content.replace(/```json|```/g,'').trim()).questions;
@@ -1275,8 +1333,8 @@ async function atAnalyze(){
   document.getElementById('at-right').style.display='block';
   document.getElementById('at-logic').innerHTML='<div class="ldots"><span>·</span><span>·</span><span>·</span></div>';
   try{
-    const res=await fetch('https://api.moonshot.cn/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer sk-WxjFTJlXO7W00fTO4xlHCbslEiL7RMU8VJSi4w3gmo47VsPC'},
-      body:JSON.stringify({model:'moonshot-v1-8k',max_tokens:900,
+    const res=await fetch('https://api.deepseek.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
+      body:JSON.stringify({model:'deepseek-chat',max_tokens:900,
         messages:[{role:'system',content:'返回严格JSON无多余文字：{"logic":"底层逻辑300字内3-4段","tags":["词1","词2","词3"],"next_action":"下次可以…50字内"}'},{role:'user',content:`工作：${atTask}\n背景：\n${qa}`}]})});
     const data=await res.json();
     const p=JSON.parse(data.choices[0].message.content.replace(/```json|```/g,'').trim());
@@ -1322,8 +1380,8 @@ async function startReview(){
   });
   if(DB.weightGoal?.logs?.length){const latest=DB.weightGoal.logs[DB.weightGoal.logs.length-1];summary+=`\n【体重】最新: ${latest.weight}kg, 目标: ${DB.weightGoal.target}kg`;}
   try{
-    const res=await fetch('https://api.moonshot.cn/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer sk-WxjFTJlXO7W00fTO4xlHCbslEiL7RMU8VJSi4w3gmo47VsPC'},
-      body:JSON.stringify({model:'moonshot-v1-8k',max_tokens:1500,
+    const res=await fetch('https://api.deepseek.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
+      body:JSON.stringify({model:'deepseek-chat',max_tokens:1500,
         messages:[{role:'system',content:`你是ENTJ型导师，帮助研二设计专业学生（目标：运动品牌产品规划）做周复盘。风格：理性、直接、克制、有洞察，像导师批改作业，不废话不煽情。600字内，自然段落，不用标题符号：\n第一段：整体状态判断（2-3句）\n第二段：最大亮点（具体）\n第三段：最需改进（结合卡点，诚实）\n第四段：下周三条建议（编号，可执行）\n最后：一句总结，克制有力`},{role:'user',content:`本周（${wkLabel(wk)}）：${summary}`}]})});
     const data=await res.json();
     const review=data.choices[0].message.content;
