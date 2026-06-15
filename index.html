@@ -515,7 +515,9 @@ const DOMAINS=[
    milestones:['形成固定每周3次习惯','达到目标体重','运动不再靠「想起来才去」'],
    actions:['定下固定3个时间段写进日历','记录今天的体重','本周完成3次运动'],
    logQ:[
-     {id:'type',q:'今天运动了吗？',type:'tags',opts:['跑步','力量训练','游泳','瑜伽/拉伸','球类','没有运动']},
+     {id:'type',q:'今天运动了吗？',type:'tags',opts:['跑步','骑行','羽毛球','健身房','其他','没有运动']},
+     {id:'distance',q:'里程数（km，选填）',type:'text',ph:'例：5.2'},
+     {id:'duration',q:'运动时长（分钟，选填）',type:'text',ph:'例：45'},
      {id:'feel',q:'身体状态',type:'tags',opts:['很爽很在线','完成了还行','有点疲惫','没运动有点懊悔']},
    ]},
   {id:'d4',name:'自主学习',color:'#38B6D4',bg:'#DFF4FA',light:'#EDF9FD',text:'#0E5A6B',type:'simple',
@@ -570,7 +572,9 @@ let DB={
   actions:{},blockpoints:{},actionRecords:[],
   reviews:{},customMilestones:{},customActions:{},
   weightGoal:{current:0,target:0,logs:[]},
-  measurements:{},dashboardStatus:{}
+  measurements:{},dashboardStatus:{},
+  thesisOutline:[],booklist:[],englist:[],
+  blockpointAnswers:{}
 };
 
 // Supabase REST helpers
@@ -614,7 +618,7 @@ async function kimiCall(messages, maxTokens){
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+KIMI_KEY},
       body:JSON.stringify({model:'deepseek-chat',max_tokens:maxTokens,messages})
     });
-    if(!res.ok){const e=await res.text();throw new Error(`${res.status}: ${e}`)}
+    if(!res.ok){const e=await res.text();throw new Error(res.status+': '+e)}
     const data=await res.json();
     return data.choices[0].message.content;
   });
@@ -702,7 +706,14 @@ function weekPct(did,wk){
     if((DB.logs[dt.toISOString().slice(0,10)]?.[did]||[]).length>0)logged++;
   }
   const cPct=(logged/7)*100;
-  return Math.round(mPct*0.5+aPct*0.3+cPct*0.2);
+  // For internship: action records this week also count
+  let actionBonus=0;
+  if(did==='d1'){
+    const wkStart=new Date(wk),wkEnd=new Date(wk);wkEnd.setDate(wkEnd.getDate()+7);
+    const wkRecords=(DB.actionRecords||[]).filter(r=>r.date>=wk&&r.date<wkEnd.toISOString().slice(0,10));
+    actionBonus=Math.min(10,wkRecords.length*3); // up to 10% bonus
+  }
+  return Math.min(100,Math.round(mPct*0.5+aPct*0.3+cPct*0.2+actionBonus));
 }
 
 // ════════════════════════ ROUTING ════════════════════════
@@ -1056,10 +1067,17 @@ function renderHeatmap(){
   let d=new Date(start);
   while(d<=end){
     const k=d.toISOString().slice(0,10);
-    const cnt=Object.values(DB.logs[k]||{}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
-    const op=cnt===0?0:Math.min(1,0.15+(cnt/8)*.85);
+    const dayLogs=DB.logs[k]||{};
+    const cnt=Object.values(dayLogs).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
+    // avg energy across all entries today
+    let totalE=0,countE=0;
+    Object.values(dayLogs).forEach(arr=>{if(Array.isArray(arr))arr.forEach(e=>{if(e.energy){totalE+=e.energy;countE++}})});
+    const avgE=countE>0?totalE/countE:0;
+    // color: low energy=cool blue, high energy=warm rose
+    const op=cnt===0?0:Math.min(1,0.2+(cnt/6)*.8);
+    var cr=Math.round(180+avgE*10),cg=Math.round(120-avgE*5),cb=Math.round(160-avgE*8);
     const cell=document.createElement('div');cell.className='hm-cell';
-    cell.style.background=cnt>0?`rgba(139,92,246,${op})`:'var(--border)';
+    cell.style.background=cnt>0?('rgba('+cr+','+cg+','+cb+','+op+')'):'rgba(180,200,210,.15)';
     cell.title=`${k}·${cnt}条`;
     cell.innerHTML=`<span>${d.getDate()}</span>`;
     hmg.appendChild(cell);d.setDate(d.getDate()+1);
@@ -1069,17 +1087,76 @@ function renderBp(){
   const bpl=document.getElementById('bp-list');bpl.innerHTML='';
   DOMAINS.forEach(dom=>{
     const bp=DB.blockpoints?.[dom.id]||'';
+    const bpAns=DB.blockpointAnswers?.[dom.id]||'';
     const div=document.createElement('div');div.className='bp-card';
-    div.innerHTML=`<div class="bp-head"><div class="bp-dot" style="background:rgba(200,180,190,.8)"></div><div class="bp-name">${dom.name}</div></div>
+    div.innerHTML=`
+      <div class="bp-head"><div class="bp-dot" style="background:rgba(200,180,190,.8)"></div><div class="bp-name">${dom.name}</div></div>
       <input class="bp-input" id="bp-${dom.id}" value="${bp}" placeholder="当前最大卡点是什么？">
-      <button class="bp-save" onclick="saveBp('${dom.id}')">保存</button>`;
+      <div style="display:flex;gap:6px;margin-top:7px">
+        <button class="bp-save" onclick="saveBp('${dom.id}')">保存卡点</button>
+        <button class="bp-save" onclick="askBp('${dom.id}')" style="background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.3);color:var(--purple)">问AI ✦</button>
+      </div>
+      <div id="bp-qa-${dom.id}" style="${bpAns?'':'display:none'}">
+        <div style="margin-top:10px;padding:10px 12px;background:rgba(139,92,246,.08);border-radius:10px;border-left:3px solid rgba(139,92,246,.4)">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--purple);margin-bottom:5px;letter-spacing:.06em">E · 导师建议</div>
+          <div id="bp-ans-${dom.id}" style="font-size:12px;line-height:1.7;color:var(--text)">${bpAns}</div>
+        </div>
+        <div style="margin-top:8px">
+          <input id="bp-followup-${dom.id}" placeholder="继续追问…" style="width:100%;border:1px solid rgba(180,180,180,.4);border-radius:8px;padding:7px 10px;font-size:12px;background:rgba(255,255,255,.6);color:var(--text);outline:none">
+          <button onclick="askBpFollowup('${dom.id}')" style="margin-top:5px;font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid rgba(139,92,246,.3);background:rgba(139,92,246,.1);color:var(--purple);cursor:pointer;font-family:var(--sans)">发送</button>
+        </div>
+      </div>`;
     bpl.appendChild(div);
   });
 }
 function saveBp(did){
   if(!DB.blockpoints)DB.blockpoints={};
   DB.blockpoints[did]=document.getElementById('bp-'+did).value.trim();save();
-  const btn=event.target;btn.textContent='已保存 ✓';setTimeout(()=>btn.textContent='保存',1500);
+  const btn=event.target;btn.textContent='已保存 ✓';setTimeout(()=>btn.textContent='保存卡点',1500);
+}
+async function askBp(did){
+  const bp=document.getElementById('bp-'+did).value.trim();
+  if(!bp){alert('请先填写卡点');return}
+  if(!DB.blockpoints)DB.blockpoints={};
+  DB.blockpoints[did]=bp;save();
+  const ansEl=document.getElementById('bp-ans-'+did);
+  const qaEl=document.getElementById('bp-qa-'+did);
+  qaEl.style.display='block';
+  ansEl.innerHTML='<span class="ldots"><span>·</span><span>·</span><span>·</span></span>';
+  const dom=DOMAINS.find(d=>d.id===did);
+  try{
+    const ans=await kimiCall([
+      {role:'system',content:'你是ENTJ型导师，针对用户在某个领域遇到的具体卡点，给出3-5条直接可执行的建议。每条建议一行，简洁有力，不废话。'},
+      {role:'user',content:`领域：${dom.name}
+卡点：${bp}`}
+    ],600);
+    ansEl.textContent=ans;
+    if(!DB.blockpointAnswers)DB.blockpointAnswers={};
+    DB.blockpointAnswers[did]=ans;save();
+  }catch(e){ansEl.textContent='分析失败，请重试'}
+}
+async function askBpFollowup(did){
+  const q=document.getElementById('bp-followup-'+did).value.trim();
+  if(!q)return;
+  const ansEl=document.getElementById('bp-ans-'+did);
+  const prevAns=DB.blockpointAnswers?.[did]||'';
+  const dom=DOMAINS.find(d=>d.id===did);
+  const bp=DB.blockpoints?.[did]||'';
+  ansEl.innerHTML+='<br><br><span style="color:var(--text3)">继续分析中…</span>';
+  try{
+    const ans=await kimiCall([
+      {role:'system',content:'你是ENTJ型导师，直接回答用户的追问，简洁有力。'},
+      {role:'user',content:`领域：${dom.name}
+卡点：${bp}
+之前的建议：${prevAns}
+追问：${q}`}
+    ],400);
+    const newAns=prevAns+'\n\n【追问】'+q+'\n'+ans;
+    ansEl.textContent=newAns;
+    if(!DB.blockpointAnswers)DB.blockpointAnswers={};
+    DB.blockpointAnswers[did]=newAns;save();
+    document.getElementById('bp-followup-'+did).value='';
+  }catch(e){ansEl.innerHTML=ansEl.innerHTML.replace('<br><br><span style="color:var(--text3)">继续分析中…</span>','<br><br>请重试')}
 }
 
 // ════════════════════════ DETAIL ════════════════════════
@@ -1089,7 +1166,9 @@ function renderDetail(){
   document.getElementById('dt-stripe').style.background=dom.color;
   const tabs=dom.type==='internship'?['日志','行动分析','里程碑']:
              dom.type==='thesis'?['日志','论文进度','里程碑']:
-             dom.type==='health'?['日志','减脂追踪','里程碑']:['日志','里程碑'];
+             dom.type==='health'?['日志','减脂追踪','里程碑']:
+             dom.id==='d4'?['日志','书单与资源','里程碑']:
+             dom.id==='d5'?['日志','学习资源','里程碑']:['日志','里程碑'];
   document.getElementById('dt-tabs').innerHTML=tabs.map((t,i)=>
     `<button class="dtab ${i===curTab?'active':''}" onclick="swTab(${i})" style="${i===curTab?'border-bottom-color:'+dom.color+';color:'+dom.text:''}">${t}</button>`).join('');
   renderDBody();
@@ -1099,8 +1178,15 @@ function renderDBody(){
   const dom=curDom;const body=document.getElementById('dt-body');body.innerHTML='';
   if(curTab===0)renderLogHistory(body,dom);
   else if(dom.type==='internship'&&curTab===1)renderActionTool(body);
+  else if(dom.type==='internship'&&curTab===2)renderMilestonePanel(body,dom);
   else if(dom.type==='thesis'&&curTab===1)renderThesisProgress(body);
+  else if(dom.type==='thesis'&&curTab===2)renderMilestonePanel(body,dom);
   else if(dom.type==='health'&&curTab===1)renderWeightTracker(body);
+  else if(dom.type==='health'&&curTab===2)renderMilestonePanel(body,dom);
+  else if(dom.id==='d4'&&curTab===1)renderFreeList(body,'d4','booklist','书单与资源');
+  else if(dom.id==='d4'&&curTab===2)renderMilestonePanel(body,dom);
+  else if(dom.id==='d5'&&curTab===1)renderFreeList(body,'d5','englist','学习资源');
+  else if(dom.id==='d5'&&curTab===2)renderMilestonePanel(body,dom);
   else renderMilestonePanel(body,dom);
 }
 function renderLogHistory(body,dom){
@@ -1243,16 +1329,33 @@ function saveMeasures(){
 
 // ── Thesis Progress
 function renderThesisProgress(body){
-  const TMS=['论点定稿并导师确认','文献池建立（20篇）','第三章初稿完成','全文初稿提交','答辩完成'];
-  const ms=DB.thesisMilestones||[];
+  if(!DB.thesisOutline)DB.thesisOutline=[];
+  // Outline editor card
   const card=document.createElement('div');card.className='card';card.style.padding='14px';
-  card.innerHTML=`<div class="slbl" style="margin-bottom:10px">论文里程碑</div>
-    <div class="item-list">${TMS.map((m,i)=>`<div class="item-row" onclick="toggleThesisM(${i})">
-      <div class="item-check ${ms[i]?'done':''}" style="${ms[i]?'background:#E8456A':''}"></div>
-      <span class="item-text ${ms[i]?'done':''}">${m}</span>
-    </div>`).join('')}</div>`;
+  card.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="slbl" style="margin-bottom:0">论文目录</div>
+      <div style="display:flex;gap:5px">
+        <button onclick="thesisAddItem('h1')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid rgba(180,180,180,.4);background:rgba(255,255,255,.6);cursor:pointer;font-weight:700">H1</button>
+        <button onclick="thesisAddItem('h2')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid rgba(180,180,180,.4);background:rgba(255,255,255,.6);cursor:pointer;font-weight:600">H2</button>
+        <button onclick="thesisAddItem('h3')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid rgba(180,180,180,.4);background:rgba(255,255,255,.6);cursor:pointer">H3</button>
+        <button onclick="thesisAddItem('p')" style="font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid rgba(180,180,180,.4);background:rgba(255,255,255,.6);cursor:pointer">正文</button>
+      </div>
+    </div>
+    <div id="thesis-outline-list" style="display:flex;flex-direction:column;gap:5px">
+      ${DB.thesisOutline.map((item,i)=>thesisItemHTML(item,i)).join('')}
+    </div>
+    ${DB.thesisOutline.length===0?'<div style="color:var(--text3);font-size:12px;text-align:center;padding:20px 0">点击右上角按钮添加论文标题或段落</div>':''}
+  `;
   body.appendChild(card);
-  const logs=Object.keys(DB.logs).sort().reverse().filter(dk=>(DB.logs[dk]['d2']||[]).length>0).slice(0,8);
+  // Set input values after DOM insert (avoids HTML escaping issues)
+  (DB.thesisOutline||[]).forEach((item,i)=>{
+    const el=document.getElementById('ti-'+i);
+    if(el)el.value=item.text||'';
+  });
+
+  // Recent logs
+  const logs=Object.keys(DB.logs).sort().reverse().filter(dk=>(DB.logs[dk]['d2']||[]).length>0).slice(0,6);
   if(logs.length){
     const lcard=document.createElement('div');lcard.className='card';lcard.style.padding='14px';
     lcard.innerHTML=`<div class="slbl" style="margin-bottom:8px">最近论文日志</div>
@@ -1266,8 +1369,88 @@ function renderThesisProgress(body){
     body.appendChild(lcard);
   }
 }
+
+function thesisItemHTML(item,i){
+  var szMap={h1:'16px',h2:'14px',h3:'13px',p:'12px'};
+  var wMap={h1:'700',h2:'600',h3:'500',p:'400'};
+  var pMap={h1:'0',h2:'12px',h3:'24px',p:'24px'};
+  var phMap={h1:'第一章标题',h2:'第一节标题',h3:'小节标题',p:'段落说明'};
+  var bg=item.done?'rgba(232,69,106,.6)':'rgba(255,255,255,.5)';
+  var clr=item.done?'var(--text3)':'var(--text)';
+  var td=item.done?'line-through':'none';
+  var chk=item.done?'<span style="color:#fff;font-size:10px">✓</span>':'';
+  var h='<div style="display:flex;align-items:center;gap:6px;padding-left:'+pMap[item.type]+'">';
+  h+='<div onclick="toggleThesisItem('+i+')" style="width:16px;height:16px;border-radius:4px;border:1.5px solid rgba(180,180,180,.5);flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;background:'+bg+'">'+chk+'</div>';
+  h+='<input id="ti-'+i+'" onchange="updateThesisItem('+i+',this.value)" placeholder="'+phMap[item.type]+'" ';
+  h+='style="flex:1;border:none;background:transparent;font-size:'+szMap[item.type]+';font-weight:'+wMap[item.type]+';color:'+clr+';outline:none;text-decoration:'+td+';font-family:var(--sans)">';
+  h+='<span onclick="deleteThesisItem('+i+')" style="font-size:16px;color:var(--text3);cursor:pointer;opacity:.4;flex-shrink:0">×</span>';
+  h+='</div>';
+  return h;
+}
+
+function thesisAddItem(type){
+  if(!DB.thesisOutline)DB.thesisOutline=[];
+  DB.thesisOutline.push({type,text:'',done:false});
+  save();renderDBody();
+}
+function updateThesisItem(i,val){
+  if(!DB.thesisOutline)return;
+  DB.thesisOutline[i].text=val;save();
+}
+function toggleThesisItem(i){
+  if(!DB.thesisOutline)return;
+  DB.thesisOutline[i].done=!DB.thesisOutline[i].done;save();renderDBody();
+}
+function deleteThesisItem(i){
+  if(!DB.thesisOutline)return;
+  DB.thesisOutline.splice(i,1);save();renderDBody();
+}
 function toggleThesisM(i){if(!DB.thesisMilestones)DB.thesisMilestones=[];DB.thesisMilestones[i]=!DB.thesisMilestones[i];save();renderDBody()}
 
+
+// ── Free list (书单/学习资源)
+function renderFreeList(body, domId, dbKey, title){
+  if(!DB[dbKey])DB[dbKey]=[];
+  const items=DB[dbKey];
+  const card=document.createElement('div');card.className='card';card.style.padding='14px';
+  card.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div class="slbl" style="margin-bottom:0">${title}</div>
+      <button onclick="freeListAdd('${dbKey}')" style="font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid rgba(180,180,180,.4);background:rgba(255,255,255,.6);cursor:pointer">+ 添加</button>
+    </div>
+    <div id="fl-list-${dbKey}" style="display:flex;flex-direction:column;gap:7px">
+      ${items.length===0
+        ?'<div style="color:var(--text3);font-size:12px;text-align:center;padding:20px 0">点击「添加」开始记录</div>'
+        :items.map((item,i)=>`
+        <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(255,255,255,.45);border-radius:10px;border:1px solid rgba(255,255,255,.6)">
+          <div onclick="freeListToggle('${dbKey}',${i})" style="width:18px;height:18px;border-radius:5px;border:1.5px solid rgba(180,180,180,.5);flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:${item.done?'rgba(232,69,106,.6)':'rgba(255,255,255,.5)'}">
+            ${item.done?'<span style="color:#fff;font-size:10px;font-weight:600">✓</span>':''}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:500;color:${item.done?'var(--text3)':'var(--text)'};text-decoration:${item.done?'line-through':'none'};margin-bottom:3px">${item.title}</div>
+            ${item.note?`<div style="font-size:11px;color:var(--text3);line-height:1.5">${item.note}</div>`:''}
+          </div>
+          <button onclick="freeListDelete('${dbKey}',${i})" style="font-size:16px;color:var(--text3);background:none;border:none;cursor:pointer;opacity:.4;flex-shrink:0">×</button>
+        </div>`).join('')}
+    </div>`;
+  body.appendChild(card);
+}
+function freeListAdd(dbKey){
+  const title=prompt('添加什么？（书名、视频、文章等）');
+  if(!title)return;
+  const note=prompt('备注（可跳过）')||'';
+  if(!DB[dbKey])DB[dbKey]=[];
+  DB[dbKey].unshift({title,note,done:false,addedAt:new Date().toISOString().slice(0,10)});
+  save();renderDBody();
+}
+function freeListToggle(dbKey,i){
+  if(!DB[dbKey])return;
+  DB[dbKey][i].done=!DB[dbKey][i].done;save();renderDBody();
+}
+function freeListDelete(dbKey,i){
+  if(!confirm('删除这条？'))return;
+  DB[dbKey].splice(i,1);save();renderDBody();
+}
 // ════════════════════════ ACTION TOOL ════════════════════════
 let atTask='',atLogic='',atTags=[],atAction='',atQs=[];
 function renderActionTool(body){
